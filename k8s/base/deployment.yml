@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pipefunc
+  labels:
+    app: pipefunc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pipefunc
+  template:
+    metadata:
+      labels:
+        app: pipefunc
+    spec:
+      containers:
+        - name: pipefunc
+          image: DOCKERHUB_USERNAME/pipefunc:latest
+          ports:
+            - containerPort: 8000
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pipefunc-service
+spec:
+  selector:
+    app: pipefunc
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000

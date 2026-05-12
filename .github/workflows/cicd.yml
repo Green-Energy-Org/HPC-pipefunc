@@ -1,0 +1,357 @@
+name: CI/CD PIPELINE
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      target_job:
+        description: "Job group to run"
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - quality        # lint + docstring + codeql
+          - test-uv        # pytest multi-python via uv
+          - test-conda     # pytest via micromamba
+          - codspeed       # performance benchmarks
+          - update-env     # update conda environment.yml
+          - toc            # update table of contents
+          - publish        # build + publish to PyPI
+          - docker         # docker build + push
+          - deploy         # k8s deploy to minikube
+
+jobs:
+
+# ── 1. PR TITLE ──────────────────────────────────────────────
+  pr-title:
+    name: "PR Title Check"
+    if: github.event_name == 'pull_request'
+    runs-on: self-hosted
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            style
+            refactor
+            perf
+            test
+            build
+            ci
+            chore
+            revert
+
+# ── 2. LINT ───────────────────────────────────────────────────
+  lint:
+    name: "Lint (ruff)"
+    if: >
+      github.event_name != 'workflow_dispatch'
+      || github.event.inputs.target_job == 'all'
+      || github.event.inputs.target_job == 'quality'
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: false
+      - run: uv tool run ruff check .
+      - run: uv tool run ruff format --check .
+
+# ── 3. DOCSTRING CHECK ────────────────────────────────────────
+  docstring-check:
+    name: "Docstring Check"
+    if: >
+      github.event_name != 'workflow_dispatch'
+      || github.event.inputs.target_job == 'all'
+      || github.event.inputs.target_job == 'quality'
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14"
+          enable-cache: false
+      - run: uv sync --locked --all-extras --dev
+      - run: uv run python -m pytest --doctest-modules pipefunc/ -v
+
+# ── 4. CODEQL ─────────────────────────────────────────────────
+  codeql:
+    name: "CodeQL Security"
+    if: >
+      github.event_name != 'workflow_dispatch'
+      || github.event.inputs.target_job == 'all'
+      || github.event.inputs.target_job == 'quality'
+    runs-on: self-hosted
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: python
+      - uses: github/codeql-action/analyze@v3
+
+# ── 5. PYTEST — uv (multi-python) ────────────────────────────
+  test-uv:
+    name: "Test uv / Python ${{ matrix.python-version }}"
+    needs: [lint]
+    if: >
+      always()
+      && (
+        github.event_name != 'workflow_dispatch'
+        || github.event.inputs.target_job == 'all'
+        || github.event.inputs.target_job == 'test-uv'
+      )
+    runs-on: self-hosted
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: false
+      - run: uv sync --locked --all-extras --dev
+      - run: uv run pytest --tb=short -q
+
+# ── 6. PYTEST — micromamba / conda ───────────────────────────
+  test-conda:
+    name: "Test micromamba"
+    needs: [lint]
+    if: >
+      always()
+      && (
+        github.event_name != 'workflow_dispatch'
+        || github.event.inputs.target_job == 'all'
+        || github.event.inputs.target_job == 'test-conda'
+      )
+    runs-on: self-hosted
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: false
+          init-shell: bash
+          generate-run-shell: true
+      - run: pytest --tb=short -q
+
+# ── 7. CODSPEED — benchmarks ─────────────────────────────────
+  codspeed:
+    name: "CodSpeed Benchmarks"
+    if: >
+      github.event_name != 'workflow_dispatch'
+      || github.event.inputs.target_job == 'all'
+      || github.event.inputs.target_job == 'codspeed'
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+          enable-cache: false
+      - run: uv sync --locked --all-extras --dev
+      - uses: CodSpeedHQ/action@v4
+        with:
+          run: uv run pytest tests/ --codspeed
+
+# ── 8. UPDATE ENVIRONMENT ─────────────────────────────────────
+  update-environment:
+    name: "Update conda environment.yml"
+    if: >
+      github.event_name != 'workflow_dispatch'
+      || github.event.inputs.target_job == 'all'
+      || github.event.inputs.target_job == 'update-env'
+    runs-on: self-hosted
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: false
+          init-shell: bash
+          generate-run-shell: true
+      - run: |
+          micromamba update --all -y
+          micromamba env export --no-builds > environment.yml
+      - uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "CI: update conda environment.yml"
+          title: "CI: update conda environment.yml"
+          branch: "ci/update-environment"
+          delete-branch: true
+
+# ── 9. TOC ────────────────────────────────────────────────────
+  toc:
+    name: "Update Table of Contents"
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: technote-space/toc-generator@v4
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+# ── 10. PUBLISH — PyPI ────────────────────────────────────────
+  publish:
+    name: "Publish to PyPI"
+    if: >
+      startsWith(github.ref, 'refs/tags/v')
+      || github.event.inputs.target_job == 'publish'
+    runs-on: self-hosted
+    environment: pypi
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: false
+      - run: uv build
+      - run: uv publish
+
+# ── 11. DOCKER BUILD ─────────────────────────────────────────
+  docker-build:
+    name: "Docker Build"
+    needs: [test-uv]
+    if: >
+      always()
+      && (
+        github.event_name != 'workflow_dispatch'
+        || github.event.inputs.target_job == 'all'
+        || github.event.inputs.target_job == 'docker'
+        || github.event.inputs.target_job == 'deploy'
+      )
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v6
+      - name: Login to Docker Hub
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" \
+            | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+      - name: Build image
+        run: |
+          docker builder prune -f --filter "until=24h"
+          docker rmi -f ${{ secrets.DOCKERHUB_USERNAME }}/pipefunc:latest 2>/dev/null || true
+          docker build --no-cache \
+            --label "git-commit=${{ github.sha }}" \
+            -t ${{ secrets.DOCKERHUB_USERNAME }}/pipefunc:latest \
+            -t ${{ secrets.DOCKERHUB_USERNAME }}/pipefunc:${{ github.sha }} \
+            .
+
+# ── 12. DOCKER PUSH ───────────────────────────────────────────
+  docker-push:
+    name: "Docker Push"
+    needs: [docker-build]
+    if: >
+      always()
+      && (
+        github.event_name != 'workflow_dispatch'
+        || github.event.inputs.target_job == 'all'
+        || github.event.inputs.target_job == 'docker'
+        || github.event.inputs.target_job == 'deploy'
+      )
+    runs-on: self-hosted
+    steps:
+      - name: Login and push
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" \
+            | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/pipefunc:latest
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/pipefunc:${{ github.sha }}
+
+# ── 13. INTEGRATION TEST ──────────────────────────────────────
+  integration-test:
+    name: "Integration Test (container)"
+    needs: [docker-push]
+    if: >
+      always()
+      && (
+        github.event_name != 'workflow_dispatch'
+        || github.event.inputs.target_job == 'all'
+        || github.event.inputs.target_job == 'docker'
+        || github.event.inputs.target_job == 'deploy'
+      )
+    runs-on: self-hosted
+    env:
+      CONTAINER_NAME: pipefunc-test-${{ github.run_id }}
+    steps:
+      - name: Run container smoke test
+        run: |
+          PORT=$(shuf -i 20000-65000 -n 1)
+          docker rm -f ${{ env.CONTAINER_NAME }} 2>/dev/null || true
+          docker run -d --name ${{ env.CONTAINER_NAME }} \
+            -p ${PORT}:8000 \
+            ${{ secrets.DOCKERHUB_USERNAME }}/pipefunc:latest
+          sleep 10
+          STATUS=$(docker inspect -f '{{.State.Running}}' ${{ env.CONTAINER_NAME }})
+          if [ "$STATUS" == "true" ]; then
+            echo "✅ Container running on port ${PORT}"
+          else
+            docker logs ${{ env.CONTAINER_NAME }}
+            exit 1
+          fi
+      - name: Cleanup
+        if: always()
+        run: docker rm -f ${{ env.CONTAINER_NAME }} 2>/dev/null || true
+
+# ── 14. DEPLOY — Minikube ─────────────────────────────────────
+  deploy-minikube:
+    name: "Deploy to Minikube"
+    needs: [integration-test]
+    if: >
+      always()
+      && (
+        github.event_name != 'workflow_dispatch'
+        || github.event.inputs.target_job == 'all'
+        || github.event.inputs.target_job == 'deploy'
+      )
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v6
+      - name: Reset Minikube
+        run: |
+          minikube delete --purge 2>/dev/null || true
+          minikube start --driver=docker --memory=4096 --cpus=2
+      - name: Apply manifests
+        run: |
+          kubectl config use-context minikube
+          kubectl apply -k k8s/overlays/minikube
+          kubectl rollout restart deployment/pipefunc
+          kubectl rollout status deployment/pipefunc --timeout=300s
+      - name: Print URL
+        run: minikube service pipefunc-service --url
+
+# ── 15. RELEASE DRAFTER ───────────────────────────────────────
+  release-drafter:
+    name: "Draft Release Notes"
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: self-hosted
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - uses: release-drafter/release-drafter@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
