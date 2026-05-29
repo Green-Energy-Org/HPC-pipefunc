@@ -28,6 +28,9 @@ jobs:
 
 # ── 1. PR TITLE ──────────────────────────────────────────────
   pr-title:
+    container:
+      image: catthehacker/ubuntu:act-22.04
+      options: --privileged
     name: "PR Title Check"
     if: github.event_name == 'pull_request'
     runs-on: self-hosted
@@ -51,6 +54,9 @@ jobs:
 
 # ── 2. LINT ───────────────────────────────────────────────────
   lint:
+    container:
+      image: catthehacker/ubuntu:act-22.04
+      options: --privileged
     name: "Lint (ruff)"
     if: >
       github.event_name != 'workflow_dispatch'
@@ -67,6 +73,9 @@ jobs:
 
 # ── 3. DOCSTRING CHECK ────────────────────────────────────────
   docstring-check:
+    container:
+      image: catthehacker/ubuntu:act-22.04
+      options: --privileged
     name: "Docstring Check"
     if: >
       github.event_name != 'workflow_dispatch'
@@ -84,6 +93,9 @@ jobs:
 
 # ── 4. CODEQL ─────────────────────────────────────────────────
   codeql:
+    container:
+      image: catthehacker/ubuntu:act-22.04
+      options: --privileged
     name: "CodeQL Security"
     if: >
       github.event_name != 'workflow_dispatch'
@@ -103,6 +115,9 @@ jobs:
 
 # ── 5. PYTEST — uv (multi-python) ────────────────────────────
   test-uv:
+    container:
+      image: catthehacker/ubuntu:act-22.04
+      options: --privileged
     name: "Test uv / Python ${{ matrix.python-version }}"
     needs: [lint]
     if: >
@@ -128,6 +143,9 @@ jobs:
 
 # ── 6. PYTEST — micromamba / conda ───────────────────────────
   test-conda:
+    container:
+      image: catthehacker/ubuntu:act-22.04
+      options: --privileged
     name: "Test micromamba"
     needs: [lint]
     if: >
@@ -153,6 +171,9 @@ jobs:
 
 # ── 7. CODSPEED — benchmarks ─────────────────────────────────
   codspeed:
+    container:
+      image: catthehacker/ubuntu:act-22.04
+      options: --privileged
     name: "CodSpeed Benchmarks"
     if: >
       github.event_name != 'workflow_dispatch'
@@ -172,6 +193,9 @@ jobs:
 
 # ── 8. UPDATE ENVIRONMENT ─────────────────────────────────────
   update-environment:
+    container:
+      image: catthehacker/ubuntu:act-22.04
+      options: --privileged
     name: "Update conda environment.yml"
     if: >
       github.event_name != 'workflow_dispatch'
@@ -201,6 +225,9 @@ jobs:
 
 # ── 9. TOC ────────────────────────────────────────────────────
   toc:
+    container:
+      image: catthehacker/ubuntu:act-22.04
+      options: --privileged
     name: "Update Table of Contents"
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: self-hosted
@@ -214,6 +241,9 @@ jobs:
 
 # ── 10. PUBLISH — PyPI ────────────────────────────────────────
   publish:
+    container:
+      image: catthehacker/ubuntu:act-22.04
+      options: --privileged
     name: "Publish to PyPI"
     if: >
       startsWith(github.ref, 'refs/tags/v')
@@ -233,6 +263,9 @@ jobs:
 
 # ── 11. DOCKER BUILD ─────────────────────────────────────────
   docker-build:
+    container:
+      image: catthehacker/ubuntu:act-22.04
+      options: --privileged
     name: "Docker Build"
     needs: [test-uv]
     if: >
@@ -262,6 +295,9 @@ jobs:
 
 # ── 12. DOCKER PUSH ───────────────────────────────────────────
   docker-push:
+    container:
+      image: catthehacker/ubuntu:act-22.04
+      options: --privileged
     name: "Docker Push"
     needs: [docker-build]
     if: >
@@ -283,6 +319,9 @@ jobs:
 
 # ── 13. INTEGRATION TEST ──────────────────────────────────────
   integration-test:
+    container:
+      image: catthehacker/ubuntu:act-22.04
+      options: --privileged
     name: "Integration Test (container)"
     needs: [docker-push]
     if: >
@@ -318,6 +357,9 @@ jobs:
 
 # ── 14. DEPLOY — Minikube ─────────────────────────────────────
   deploy-minikube:
+    container:
+      image: catthehacker/ubuntu:act-22.04
+      options: --privileged
     name: "Deploy to Minikube"
     needs: [integration-test]
     if: >
@@ -345,6 +387,9 @@ jobs:
 
 # ── 15. RELEASE DRAFTER ───────────────────────────────────────
   release-drafter:
+    container:
+      image: catthehacker/ubuntu:act-22.04
+      options: --privileged
     name: "Draft Release Notes"
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: self-hosted

@@ -7,6 +7,9 @@ on:
 
 jobs:
   test:
+    container:
+      image: catthehacker/ubuntu:act-22.04
+      options: --privileged
     runs-on: self-hosted
     timeout-minutes: 10
     strategy:
